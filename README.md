@@ -1,50 +1,12 @@
-# FitDiT: Advancing the Authentic Garment Details for High-fidelity Virtual Try-on
-
-<div style="display: flex; justify-content: center; align-items: center;">
-  <a href="https://arxiv.org/abs/2411.10499" style="margin: 0 2px;">
-    <img src='https://img.shields.io/badge/arXiv-2411.10499-red?style=flat&logo=arXiv&logoColor=red' alt='arxiv'>
-  </a>
-  <a href="https://github.com/BoyuanJiang/FitDiT" style="margin: 0 2px;">
-    <img src='https://img.shields.io/badge/GitHub-Repo-blue?style=flat&logo=GitHub' alt='GitHub'>
-  </a>
-  <a href="https://huggingface.co/spaces/BoyuanJiang/FitDiT" style="margin: 0 2px;">
-    <img src='https://img.shields.io/badge/Space-ZeroGPU-orange?style=flat&logo=Gradio&logoColor=red' alt='Demo'>
-  </a>
-  <a href="http://demo.fitdit.byjiang.com/" style="margin: 0 2px;">
-    <img src='https://img.shields.io/badge/Demo-Gradio-gold?style=flat&logo=Gradio&logoColor=red' alt='Demo'>
-  </a>
-  <a href='https://huggingface.co/BoyuanJiang/FitDiT' style="margin: 0 2px;">
-    <img src='https://img.shields.io/badge/Hugging Face-ckpts-orange?style=flat&logo=HuggingFace&logoColor=orange' alt='huggingface'>
-  </a>
-  <a href='https://byjiang.com/FitDiT/' style="margin: 0 2px;">
-    <img src='https://img.shields.io/badge/Webpage-Project-silver?style=flat&logo=&logoColor=orange' alt='webpage'>
-  </a>
-  <a href="https://raw.githubusercontent.com/BoyuanJiang/FitDiT/refs/heads/main/LICENSE" style="margin: 0 2px;">
-    <img src='https://img.shields.io/badge/License-CC BY--NC--SA--4.0-lightgreen?style=flat&logo=Lisence' alt='License'>
-  </a>
-</div>
-
-<p align="center">
-    👋 Join our <a href="resource/img/QQ_group.jpg" target="_blank">QQ Chat Group</a> 
-</p>
-<p align="center">
+# CV Final Project
 
 
-**FitDiT** is designed for high-fidelity virtual try-on using Diffusion Transformers (DiT).
-<div align="center">
-  <img src="resource/img/teaser.jpg" width="100%" height="100%"/>
-</div>
-
-
-## Updates
-- **`2025/1/16`**: We provide the [ComfyUI version of FitDiT](https://github.com/BoyuanJiang/FitDiT/tree/FitDiT-ComfyUI), you can use FitDiT in ComfyUI now.
-- **`2025/1/9`**: We provide a [**Huggingface Space**](https://huggingface.co/spaces/BoyuanJiang/FitDiT) of FitDiT, thanks for Huggingface community GPU grant for providing the GPU resources.
-- **`2024/12/20`**: The FitDiT [**model weight**](https://huggingface.co/BoyuanJiang/FitDiT) is available.
-- **`2024/12/17`**: Inference code is released.
-- **`2024/12/4`**: Our [**Online Demo**](http://demo.fitdit.byjiang.com/) is released.
-- **`2024/11/25`**: Our [**Complex Virtual Dressing Dataset (CVDD)**](https://huggingface.co/datasets/BoyuanJiang/CVDD) is released.
-- **`2024/11/15`**: Our [**FitDiT paper**](https://arxiv.org/abs/2411.10499) is available.
-
+## Task
+1. frequency loss: design 
+2. inference code:
+3. evaluate code:
+4. train code: 
+5. video demo: 
 
 ## Gradio Demo
 Our algorithm is divided into two steps. The first step is to generate the mask of the try-on area, and the second step is to try-on in the mask area.
@@ -93,37 +55,5 @@ python gradio_sd3.py --model_path local_model_dir --fp16 --offload
 
 # Run model with fp16 and aggressive cpu offload, slowest inference and less memory
 python gradio_sd3.py --model_path local_model_dir --fp16 --aggressive_offload
-```
-
-## Third-Party Creations
-We found there've been some 3rd party applications or tutorial based on our FitDiT. Many thanks for their contribution to the community! 
-If you have any related work that you would like to see displayed, please submit it in the [issue](https://github.com/BoyuanJiang/FitDiT/issues/new).
-These projects have not been verified by us. If you have any questions, please seek help from the original project authors.
-
-### Tutorial
-- A tutorial of using the comfyui version of FitDiT, from `T8star-Aix` at [youtube](https://www.youtube.com/watch?v=qBQtYYa-bvs) or [bilibili](https://www.bilibili.com/video/BV1U4wpe6EkD/)
-
-### Applications
-- Local one-click integration package of FitDiT, which can be found at [deepface forum](https://deepface.cc/thread-517-1-1.html)
-
-## Star History
-[![Star History Chart](https://api.star-history.com/svg?repos=BoyuanJiang/FitDiT&type=Date)](https://star-history.com/#BoyuanJiang/FitDiT&Date)
-
-## Contact
-This model can only be used **for non-commercial use**. For commercial use, please visit [Tencent Cloud](https://cloud.tencent.com/document/product/1668/108532) for support.
-
-
-## Citation
-If you find our work helpful for your research, please consider citing our work.
-```
-@misc{jiang2024fitditadvancingauthenticgarment,
-      title={FitDiT: Advancing the Authentic Garment Details for High-fidelity Virtual Try-on}, 
-      author={Boyuan Jiang and Xiaobin Hu and Donghao Luo and Qingdong He and Chengming Xu and Jinlong Peng and Jiangning Zhang and Chengjie Wang and Yunsheng Wu and Yanwei Fu},
-      year={2024},
-      eprint={2411.10499},
-      archivePrefix={arXiv},
-      primaryClass={cs.CV},
-      url={https://arxiv.org/abs/2411.10499}, 
-}
 ```
 
