@@ -17,14 +17,33 @@ from src.transformer_sd3_vton import SD3Transformer2DModel as SD3Transformer2DMo
 import cv2
 import random
 from huggingface_hub import snapshot_download
+import gradio_client.utils as gc
 
 example_path = os.path.join(os.path.dirname(__file__), 'examples')
 
-fitdit_repo = "./local_model_dir"
-repo_path = "./local_model_dir"
+# fitdit_repo = "./local_model_dir"
+# repo_path = "./local_model_dir"
+fitdit_repo = "/Users/poyi/Poyi/Postgraduate/JHU/Y1S1/Comuter Vision/Project/Repository/local_model_dir"
+repo_path = fitdit_repo
 
-weight_dtype = torch.bfloat16
-device = "cuda"
+#  Quick fix
+_orig = gc._json_schema_to_python_type
+def _safe_json_schema_to_python_type(schema, defs=None):
+    if isinstance(schema, bool):
+        return "Any"
+    return _orig(schema, defs)
+gc._json_schema_to_python_type = _safe_json_schema_to_python_type
+
+if torch.cuda.is_available():
+    device = "cuda"
+    weight_dtype = torch.float16
+elif torch.backends.mps.is_available():
+    device = "mps"
+    weight_dtype = torch.float16
+else:
+    device = "cpu"
+    weight_dtype = torch.float32
+
 transformer_garm = SD3Transformer2DModel_Garm.from_pretrained(os.path.join(repo_path, "transformer_garm"), torch_dtype=weight_dtype)
 transformer_vton = SD3Transformer2DModel_Vton.from_pretrained(os.path.join(repo_path, "transformer_vton"), torch_dtype=weight_dtype)
 pose_guider =  PoseGuider(conditioning_embedding_channels=1536, conditioning_channels=3, block_out_channels=(32, 64, 256, 512))
@@ -302,4 +321,4 @@ def create_demo():
 
 if __name__ == "__main__":
     demo = create_demo()
-    demo.launch(share=True)
+    demo.queue().launch(share=True, show_api=False)

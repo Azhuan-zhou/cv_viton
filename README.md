@@ -27,12 +27,15 @@ You can simpley get try-on mask by click **Step1: Run Mask** at the right side o
 ### Step2: Run Try-on
 After generating a suitable mask, you can get the try-on results by click **Step2: Run Try-on**. In the Try-on resolution drop-down box, you can select a suitable processing resolution. In our online demo, the default resolution is 1152x1536, which means that the input model image and garment image will be pad and resized to this resolution before being fed into the model.
 
+## Prerequisite
+1. You need a huggingface account and setup the token in order to pull the model weight using cli
+2. Run "hf auth login" -> "git lfs install" -> "git clone https://huggingface.co/BoyuanJiang/FitDiT local_model_dir"
 
 ## Local Demo
 First apply access of FitDiT [model weight](https://huggingface.co/BoyuanJiang/FitDiT), then clone model to *local_model_dir*
 
 ### Enviroment
-We test our model with following enviroment
+We test our model with following enviroment , torch 2.4.0 works with python 3.11 and below
 ```
 torch==2.4.0
 torchvision==0.19.0
