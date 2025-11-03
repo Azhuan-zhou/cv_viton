@@ -2,6 +2,7 @@ import spaces
 import gradio as gr
 import os
 import math
+from src.config import CONFIG
 from preprocess.humanparsing.run_parsing import Parsing
 from preprocess.dwpose import DWposeDetector
 from transformers import CLIPVisionModelWithProjection, CLIPImageProcessor
@@ -23,7 +24,7 @@ example_path = os.path.join(os.path.dirname(__file__), 'examples')
 
 # fitdit_repo = "./local_model_dir"
 # repo_path = "./local_model_dir"
-fitdit_repo = "/Users/poyi/Poyi/Postgraduate/JHU/Y1S1/Comuter Vision/Project/Repository/local_model_dir"
+fitdit_repo = CONFIG['paths']['model_dir']
 repo_path = fitdit_repo
 
 #  Quick fix
