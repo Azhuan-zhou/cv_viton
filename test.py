@@ -1,165 +1,440 @@
-import gradio as gr
 import os
-import math
-from preprocess.humanparsing.run_parsing import Parsing
-from preprocess.dwpose import DWposeDetector
-from transformers import CLIPVisionModelWithProjection, CLIPImageProcessor
-import torch
-import torch.nn as nn
-from src.pose_guider import PoseGuider
-from PIL import Image
-from src.utils_mask import get_mask_location
-import numpy as np
-from src.pipeline_stable_diffusion_3_tryon import StableDiffusion3TryOnPipeline
-from src.transformer_sd3_garm import SD3Transformer2DModel as SD3Transformer2DModel_Garm
-from src.transformer_sd3_vton import SD3Transformer2DModel as SD3Transformer2DModel_Vton
-import cv2
 import random
+import argparse
+import json
+import itertools
+import torch
+import torch.nn.functional as F
+from torchvision import transforms
+from PIL import Image
+from transformers import CLIPImageProcessor
+from accelerate import Accelerator
+from accelerate.utils import ProjectConfiguration
+from diffusers import AutoencoderKL, DDPMScheduler
+from transformers import CLIPTextModel, CLIPTokenizer, CLIPVisionModelWithProjection, CLIPTextModelWithProjection
 
-example_path = os.path.join(os.path.dirname(__file__), 'examples')
+from diffusers.utils.import_utils import is_xformers_available
+from typing import Literal, Tuple,List
+import torch.utils.data as data
+import math
+from tqdm.auto import tqdm
+from diffusers.training_utils import compute_snr
+import torchvision.transforms.functional as TF
+from VitonDataset import VitonHDDataset
 
 
-def pad_and_resize(im, new_width=768, new_height=1024, pad_color=(255, 255, 255), mode=Image.LANCZOS):
-    old_width, old_height = im.size
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Simple example of a training script.")
+    parser.add_argument("--pretrained_model_name_or_path",type=str,default="diffusers/stable-diffusion-xl-1.0-inpainting-0.1",required=False,help="Path to pretrained model or model identifier from huggingface.co/models.",)
+    parser.add_argument("--pretrained_garmentnet_path",type=str,default="stabilityai/stable-diffusion-xl-base-1.0",required=False,help="Path to pretrained model or model identifier from huggingface.co/models.",)
+    parser.add_argument("--checkpointing_epoch",type=int,default=10,help=("Save a checkpoint of the training state every X updates. These checkpoints are only suitable for resuming"" training using `--resume_from_checkpoint`."),)
+    parser.add_argument("--pretrained_ip_adapter_path",type=str,default="ckpt/ip_adapter/ip-adapter-plus_sdxl_vit-h.bin",help="Path to pretrained ip adapter model. If not specified weights are initialized randomly.",)
+    parser.add_argument("--image_encoder_path",type=str,default="ckpt/image_encoder",required=False,help="Path to CLIP image encoder",)
+    parser.add_argument("--gradient_checkpointing",action="store_true",help="Whether or not to use gradient checkpointing to save memory at the expense of slower backward pass.",)
+    parser.add_argument("--width",type=int,default=768,)
+    parser.add_argument("--height",type=int,default=1024,)
+    parser.add_argument("--gradient_accumulation_steps",type=int,default=1,help="Number of updates steps to accumulate before performing a backward/update pass.",)
+    parser.add_argument("--logging_steps",type=int,default=1000,help=("Save a checkpoint of the training state every X updates. These checkpoints are only suitable for resuming"" training using `--resume_from_checkpoint`."),)
+    parser.add_argument("--output_dir",type=str,default="output",help="The output directory where the model predictions and checkpoints will be written.",)
+    parser.add_argument("--snr_gamma",type=float,default=None,help="SNR weighting gamma to be used if rebalancing the loss. Recommended value is 5.0. ""More details here: https://arxiv.org/abs/2303.09556.",)
+    parser.add_argument("--num_tokens",type=int,default=16,help=("IP adapter token nums"),)
+    parser.add_argument("--learning_rate",type=float,default=1e-5,help="Learning rate to use.",)
+    parser.add_argument("--weight_decay", type=float, default=1e-2, help="Weight decay to use.")
+    parser.add_argument("--train_batch_size", type=int, default=6, help="Batch size (per device) for the training dataloader.")
+    parser.add_argument("--test_batch_size", type=int, default=4, help="Batch size (per device) for the training dataloader.")
+    parser.add_argument("--num_train_epochs", type=int, default=130)
+    parser.add_argument("--max_train_steps",type=int,default=None,help="Total number of training steps to perform.  If provided, overrides num_train_epochs.",)
+    parser.add_argument("--noise_offset", type=float, default=None, help="noise offset")
+    parser.add_argument("--use_8bit_adam", action="store_true", help="Whether or not to use 8-bit Adam from bitsandbytes.")
+    parser.add_argument("--enable_xformers_memory_efficient_attention", action="store_true", help="Whether or not to use xformers.")
+    parser.add_argument("--mixed_precision",type=str,default=None,choices=["no", "fp16", "bf16"],help=("Whether to use mixed precision. Choose between fp16 and bf16 (bfloat16). Bf16 requires PyTorch >="" 1.10.and an Nvidia Ampere GPU.  Default to the value of accelerate config of the current system or the"" flag passed with the `accelerate.launch` command. Use this argument to override the accelerate config."),)
+    parser.add_argument("--guidance_scale",type=float,default=2.0,)
+    parser.add_argument("--seed", type=int, default=42,)    
+    parser.add_argument("--num_inference_steps",type=int,default=30,)    
+    parser.add_argument("--adam_beta1", type=float, default=0.9, help="The beta1 parameter for the Adam optimizer.")
+    parser.add_argument("--adam_beta2", type=float, default=0.999, help="The beta2 parameter for the Adam optimizer.")
+    parser.add_argument("--adam_weight_decay", type=float, default=1e-2, help="Weight decay to use.")
+    parser.add_argument("--adam_epsilon", type=float, default=1e-08, help="Epsilon value for the Adam optimizer")
+    parser.add_argument("--local_rank", type=int, default=-1, help="For distributed training: local_rank")
+    parser.add_argument("--data_dir", type=str, default="", help="For distributed training: local_rank")
     
-    ratio_w = new_width / old_width
-    ratio_h = new_height / old_height
-    if ratio_w < ratio_h:
-        new_size = (new_width, round(old_height * ratio_w))
-    else:
-        new_size = (round(old_width * ratio_h), new_height)
-    
-    im_resized = im.resize(new_size, mode)
+    args = parser.parse_args()
+    env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
+    if env_local_rank != -1 and env_local_rank != args.local_rank:
+        args.local_rank = env_local_rank
 
-    pad_w = math.ceil((new_width - im_resized.width) / 2)
-    pad_h = math.ceil((new_height - im_resized.height) / 2)
+    return args
 
-    new_im = Image.new('RGB', (new_width, new_height), pad_color)
-    
-    new_im.paste(im_resized, (pad_w, pad_h))
 
-    return new_im, pad_w, pad_h
 
-def unpad_and_resize(padded_im, pad_w, pad_h, original_width, original_height):
-    width, height = padded_im.size
-    
-    left = pad_w
-    top = pad_h
-    right = width - pad_w
-    bottom = height - pad_h
-    
-    cropped_im = padded_im.crop((left, top, right, bottom))
 
-    resized_im = cropped_im.resize((original_width, original_height), Image.LANCZOS)
 
-    return resized_im
+def main():
 
-def resize_image(img, target_size=768):
-    width, height = img.size
-    
-    if width < height:
-        scale = target_size / width
-    else:
-        scale = target_size / height
-    
-    new_width = int(round(width * scale))
-    new_height = int(round(height * scale))
-    
-    resized_img = img.resize((new_width, new_height), Image.LANCZOS)
-    
-    return resized_img
 
-class FitDiTGenerator:
-    def __init__(self, model_root, offload=False, aggressive_offload=False, device="cuda:0", with_fp16=False):
-        weight_dtype = torch.float16 if with_fp16 else torch.bfloat16
-        transformer_garm = SD3Transformer2DModel_Garm.from_pretrained(os.path.join(model_root, "transformer_garm"), torch_dtype=weight_dtype)
-        transformer_vton = SD3Transformer2DModel_Vton.from_pretrained(os.path.join(model_root, "transformer_vton"), torch_dtype=weight_dtype)
-        pose_guider =  PoseGuider(conditioning_embedding_channels=1536, conditioning_channels=3, block_out_channels=(32, 64, 256, 512))
-        pose_guider.load_state_dict(torch.load(os.path.join(model_root, "pose_guider", "diffusion_pytorch_model.bin")))
-        image_encoder_large = CLIPVisionModelWithProjection.from_pretrained("openai/clip-vit-large-patch14", torch_dtype=weight_dtype)
-        image_encoder_bigG = CLIPVisionModelWithProjection.from_pretrained("laion/CLIP-ViT-bigG-14-laion2B-39B-b160k", torch_dtype=weight_dtype)
-        pose_guider.to(device=device, dtype=weight_dtype)
-        image_encoder_large.to(device=device)
-        image_encoder_bigG.to(device=device)
-        self.pipeline = StableDiffusion3TryOnPipeline.from_pretrained(model_root, torch_dtype=weight_dtype, transformer_garm=transformer_garm, transformer_vton=transformer_vton, pose_guider=pose_guider, image_encoder_large=image_encoder_large, image_encoder_bigG=image_encoder_bigG)
-        self.pipeline.to(device)
-        if offload:
-            self.pipeline.enable_model_cpu_offload()
-            self.dwprocessor = DWposeDetector(model_root=model_root, device='cpu')
-            self.parsing_model = Parsing(model_root=model_root, device='cpu')
-        elif aggressive_offload:
-            self.pipeline.enable_sequential_cpu_offload()
-            self.dwprocessor = DWposeDetector(model_root=model_root, device='cpu')
-            self.parsing_model = Parsing(model_root=model_root, device='cpu')
+    args = parse_args()
+    accelerator_project_config = ProjectConfiguration(project_dir=args.output_dir)
+    accelerator = Accelerator(
+        mixed_precision=args.mixed_precision,
+        gradient_accumulation_steps=args.gradient_accumulation_steps,
+        project_config=accelerator_project_config,
+    )
+
+    if accelerator.is_main_process:
+        if args.output_dir is not None:
+            os.makedirs(args.output_dir, exist_ok=True)
+
+    # Load scheduler, tokenizer and models.
+    noise_scheduler = DDPMScheduler.from_pretrained(args.pretrained_model_name_or_path, subfolder="scheduler",rescale_betas_zero_snr=True)
+    tokenizer = CLIPTokenizer.from_pretrained(args.pretrained_model_name_or_path, subfolder="tokenizer")
+    text_encoder = CLIPTextModel.from_pretrained(args.pretrained_model_name_or_path, subfolder="text_encoder")
+    tokenizer_2 = CLIPTokenizer.from_pretrained(args.pretrained_model_name_or_path, subfolder="tokenizer_2")
+    text_encoder_2 = CLIPTextModelWithProjection.from_pretrained(args.pretrained_model_name_or_path, subfolder="text_encoder_2")
+    vae = AutoencoderKL.from_pretrained(args.pretrained_model_name_or_path,subfolder="vae",torch_dtype=torch.float16,)
+    unet_encoder = UNet2DConditionModel_ref.from_pretrained(args.pretrained_garmentnet_path, subfolder="unet")
+    unet_encoder.config.addition_embed_type = None
+    unet_encoder.config["addition_embed_type"] = None
+    image_encoder = CLIPVisionModelWithProjection.from_pretrained(args.image_encoder_path)
+
+    #customize unet start
+    unet = UNet2DConditionModel.from_pretrained(args.pretrained_model_name_or_path, subfolder="unet",low_cpu_mem_usage=False, device_map=None)
+    unet.config.encoder_hid_dim = image_encoder.config.hidden_size
+    unet.config.encoder_hid_dim_type = "ip_image_proj"
+    unet.config["encoder_hid_dim"] = image_encoder.config.hidden_size
+    unet.config["encoder_hid_dim_type"] = "ip_image_proj"
+
+
+    state_dict = torch.load(args.pretrained_ip_adapter_path, map_location="cpu")
+ 
+ 
+    adapter_modules = torch.nn.ModuleList(unet.attn_processors.values())
+    adapter_modules.load_state_dict(state_dict["ip_adapter"],strict=True)
+
+    #ip-adapter
+    image_proj_model = Resampler(
+        dim=image_encoder.config.hidden_size,
+        depth=4,
+        dim_head=64,
+        heads=20,
+        num_queries=args.num_tokens,
+        embedding_dim=image_encoder.config.hidden_size,
+        output_dim=unet.config.cross_attention_dim,
+        ff_mult=4,
+    ).to(accelerator.device, dtype=torch.float32)
+
+    image_proj_model.load_state_dict(state_dict["image_proj"], strict=True)
+    image_proj_model.requires_grad_(True)
+
+    unet.encoder_hid_proj = image_proj_model
+
+    conv_new = torch.nn.Conv2d(
+        in_channels=4+4+1+4,
+        out_channels=unet.conv_in.out_channels,
+        kernel_size=3,
+        padding=1,
+    )
+    torch.nn.init.kaiming_normal_(conv_new.weight)  
+    conv_new.weight.data = conv_new.weight.data * 0.  
+
+    conv_new.weight.data[:, :9] = unet.conv_in.weight.data  
+    conv_new.bias.data = unet.conv_in.bias.data  
+
+    unet.conv_in = conv_new  # replace conv layer in unet
+    unet.config['in_channels'] = 13  # update config
+    unet.config.in_channels = 13  # update config
+    #customize unet end
+
+
+    weight_dtype = torch.float32
+    if accelerator.mixed_precision == "fp16":
+        weight_dtype = torch.float16
+    elif accelerator.mixed_precision == "bf16":
+        weight_dtype = torch.bfloat16
+    vae.to(accelerator.device) 
+    text_encoder.to(accelerator.device, dtype=weight_dtype)
+    text_encoder_2.to(accelerator.device, dtype=weight_dtype)
+    image_encoder.to(accelerator.device, dtype=weight_dtype)
+    unet_encoder.to(accelerator.device, dtype=weight_dtype)
+
+
+    vae.requires_grad_(False)
+    text_encoder.requires_grad_(False)
+    text_encoder_2.requires_grad_(False)
+    image_encoder.requires_grad_(False)
+    unet_encoder.requires_grad_(False)
+    unet.requires_grad_(True)
+
+
+
+
+    if args.enable_xformers_memory_efficient_attention:
+        if is_xformers_available():
+            import xformers
+
+            unet.enable_xformers_memory_efficient_attention()
         else:
-            self.pipeline.to(device)
-            self.dwprocessor = DWposeDetector(model_root=model_root, device=device)
-            self.parsing_model = Parsing(model_root=model_root, device=device)
-        
-    def generate_mask(self, vton_img, category, offset_top, offset_bottom, offset_left, offset_right):
-        with torch.inference_mode():
-            vton_img = Image.open(vton_img)
-            vton_img_det = resize_image(vton_img)
-            pose_image, keypoints, _, candidate = self.dwprocessor(np.array(vton_img_det)[:,:,::-1])
-            candidate[candidate<0]=0
-            candidate = candidate[0]
+            raise ValueError("xformers is not available. Make sure it is installed correctly")
+    
+    if args.gradient_checkpointing:
+        unet.enable_gradient_checkpointing()
+        unet_encoder.enable_gradient_checkpointing()
+    unet.train()
 
-            candidate[:, 0]*=vton_img_det.width
-            candidate[:, 1]*=vton_img_det.height
+    if args.use_8bit_adam:
+        try:
+            import bitsandbytes as bnb
+        except ImportError:
+            raise ImportError(
+                "To use 8-bit Adam, please install the bitsandbytes library: `pip install bitsandbytes`."
+            )
 
-            pose_image = pose_image[:,:,::-1] #rgb
-            pose_image = Image.fromarray(pose_image)
-            model_parse, _ = self.parsing_model(vton_img_det)
+        optimizer_class = bnb.optim.AdamW8bit
+    else:
+        optimizer_class = torch.optim.AdamW
 
-            mask, mask_gray = get_mask_location(category, model_parse, \
-                                        candidate, model_parse.width, model_parse.height, \
-                                        offset_top, offset_bottom, offset_left, offset_right)
-            mask = mask.resize(vton_img.size)
-            mask_gray = mask_gray.resize(vton_img.size)
-            mask = mask.convert("L")
-            mask_gray = mask_gray.convert("L")
-            masked_vton_img = Image.composite(mask_gray, vton_img, mask)
+    params_to_opt = itertools.chain(unet.parameters())
 
-            im = {}
-            im['background'] = np.array(vton_img.convert("RGBA"))
-            im['layers'] = [np.concatenate((np.array(mask_gray.convert("RGB")), np.array(mask)[:,:,np.newaxis]),axis=2)]
-            im['composite'] = np.array(masked_vton_img.convert("RGBA"))
+
+    optimizer = optimizer_class(
+        params_to_opt,
+        lr=args.learning_rate,
+        betas=(args.adam_beta1, args.adam_beta2),
+        weight_decay=args.adam_weight_decay,
+        eps=args.adam_epsilon,
+    )
+    
+    train_dataset = VitonHDDataset(
+        dataroot_path=args.data_dir,
+        phase="train",
+        order="paired",
+        size=(args.height, args.width),
+    )
+    train_dataloader = torch.utils.data.DataLoader(
+        train_dataset,
+        pin_memory=True,
+        shuffle=False,
+        batch_size=args.train_batch_size,
+        num_workers=16,
+    )
+    test_dataset = VitonHDDataset(
+        dataroot_path=args.data_dir,
+        phase="test",
+        order="paired",
+        size=(args.height, args.width),
+    )
+    test_dataloader = torch.utils.data.DataLoader(
+        test_dataset,
+        shuffle=False,
+        batch_size=args.test_batch_size,
+        num_workers=4,
+    )
+
+    overrode_max_train_steps = False
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
+    if args.max_train_steps is None:
+        args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
+        overrode_max_train_steps = True
+
+
+    unet,image_proj_model,unet_encoder,image_encoder,optimizer,train_dataloader,test_dataloader = accelerator.prepare(unet, image_proj_model,unet_encoder,image_encoder,optimizer,train_dataloader,test_dataloader)
+    initial_global_step = 0
+
+    # We need to recalculate our total training steps as the size of the training dataloader may have changed.
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / args.gradient_accumulation_steps)
+    if overrode_max_train_steps:
+        args.max_train_steps = args.num_train_epochs * num_update_steps_per_epoch
+    # Afterwards we recalculate our number of training epochs
+    args.num_train_epochs = math.ceil(args.max_train_steps / num_update_steps_per_epoch)
+
+    # Train!
+    progress_bar = tqdm(
+        range(0, args.max_train_steps),
+        initial=initial_global_step,
+        desc="Steps",
+        # Only show the progress bar once on each machine.
+        disable=not accelerator.is_local_main_process,
+    )
+    global_step = 0
+    first_epoch = 0
+    train_loss=0.0
+    for epoch in range(first_epoch, args.num_train_epochs):
+        for step, batch in enumerate(train_dataloader):
+            with accelerator.accumulate(unet), accelerator.accumulate(image_proj_model):
+               
+                pixel_values = batch["image"].to(dtype=vae.dtype)
+                model_input = vae.encode(pixel_values).latent_dist.sample()
+                model_input = model_input * vae.config.scaling_factor
+
+                masked_latents = vae.encode(
+                    batch["im_mask"].reshape(batch["image"].shape).to(dtype=vae.dtype)
+                ).latent_dist.sample()
+                masked_latents = masked_latents * vae.config.scaling_factor
+                masks = batch["inpaint_mask"]
+                # resize the mask to latents shape as we concatenate the mask to the latents
+                mask = torch.stack(
+                    [
+                        torch.nn.functional.interpolate(masks, size=(args.height // 8, args.width // 8))
+                    ]
+                )
+                mask = mask.reshape(-1, 1, args.height // 8, args.width // 8)
+
+                pose_map = vae.encode(batch["pose_img"].to(dtype=vae.dtype)).latent_dist.sample()
+                pose_map = pose_map * vae.config.scaling_factor
+
+                # Sample noise that we'll add to the latents
+                noise = torch.randn_like(model_input)
+
+                bsz = model_input.shape[0]
+                timesteps = torch.randint(
+                        0, noise_scheduler.config.num_train_timesteps, (bsz,), device=model_input.device
+                    )
+                # Add noise to the latents according to the noise magnitude at each timestep
+                noisy_latents = noise_scheduler.add_noise(model_input, noise, timesteps)
+                latent_model_input = torch.cat([noisy_latents, mask,masked_latents,pose_map], dim=1)
             
-            return im, pose_image
+            
+                text_input_ids = tokenizer(
+                    batch['caption'],
+                    max_length=tokenizer.model_max_length,
+                    padding="max_length",
+                    truncation=True,
+                    return_tensors="pt"
+                ).input_ids
+                text_input_ids_2 = tokenizer_2(
+                    batch['caption'],
+                    max_length=tokenizer_2.model_max_length,
+                    padding="max_length",
+                    truncation=True,
+                    return_tensors="pt"
+                ).input_ids
 
-    def process(self, vton_img, garm_img, pre_mask, pose_image, n_steps, image_scale, seed, num_images_per_prompt, resolution):
-        assert resolution in ["768x1024", "1152x1536", "1536x2048"]
-        new_width, new_height = resolution.split("x")
-        new_width = int(new_width)
-        new_height = int(new_height)
-        with torch.inference_mode():
-            garm_img = Image.open(garm_img)
-            vton_img = Image.open(vton_img)
+                encoder_output = text_encoder(text_input_ids.to(accelerator.device), output_hidden_states=True)
+                text_embeds = encoder_output.hidden_states[-2]
+                encoder_output_2 = text_encoder_2(text_input_ids_2.to(accelerator.device), output_hidden_states=True)
+                pooled_text_embeds = encoder_output_2[0]
+                text_embeds_2 = encoder_output_2.hidden_states[-2]
+                encoder_hidden_states = torch.concat([text_embeds, text_embeds_2], dim=-1) # concat
 
-            model_image_size = vton_img.size
-            garm_img, _, _ = pad_and_resize(garm_img, new_width=new_width, new_height=new_height)
-            vton_img, pad_w, pad_h = pad_and_resize(vton_img, new_width=new_width, new_height=new_height)
 
-            mask = pre_mask["layers"][0][:,:,3]
-            mask = Image.fromarray(mask)
-            mask, _, _ = pad_and_resize(mask, new_width=new_width, new_height=new_height, pad_color=(0,0,0))
-            mask = mask.convert("L")
-            pose_image = Image.fromarray(pose_image)
-            pose_image, _, _ = pad_and_resize(pose_image, new_width=new_width, new_height=new_height, pad_color=(0,0,0))
-            if seed==-1:
-                seed = random.randint(0, 2147483647)
-            res = self.pipeline(
-                height=new_height,
-                width=new_width,
-                guidance_scale=image_scale,
-                num_inference_steps=n_steps,
-                generator=torch.Generator("cpu").manual_seed(seed),
-                cloth_image=garm_img,
-                model_image=vton_img,
-                mask=mask,
-                pose_image=pose_image,
-                num_images_per_prompt=num_images_per_prompt
-            ).images
-            for idx in range(len(res)):
-                res[idx] = unpad_and_resize(res[idx], pad_w, pad_h, model_image_size[0], model_image_size[1])
-            return res
+                def compute_time_ids(original_size, crops_coords_top_left = (0,0)):
+                    # Adapted from pipeline.StableDiffusionXLPipeline._get_add_time_ids
+                    target_size = (args.height, args.height) 
+                    add_time_ids = list(original_size + crops_coords_top_left + target_size)
+                    add_time_ids = torch.tensor([add_time_ids])
+                    add_time_ids = add_time_ids.to(accelerator.device)
+                    return add_time_ids
+                
+                add_time_ids = torch.cat(
+                    [compute_time_ids((args.height, args.height)) for i in range(bsz)]
+                )
+                        
+                img_emb_list = []
+                for i in range(bsz):
+                    img_emb_list.append(batch['cloth'][i])
+                
+                image_embeds = torch.cat(img_emb_list,dim=0)
+                image_embeds = image_encoder(image_embeds, output_hidden_states=True).hidden_states[-2]
+                ip_tokens =image_proj_model(image_embeds)
+            
+
+
+                # add cond
+                unet_added_cond_kwargs = {"text_embeds": pooled_text_embeds, "time_ids": add_time_ids}
+                unet_added_cond_kwargs["image_embeds"] = ip_tokens
+
+                cloth_values = batch["cloth_pure"].to(accelerator.device,dtype=vae.dtype)
+                cloth_values = vae.encode(cloth_values).latent_dist.sample()
+                cloth_values = cloth_values * vae.config.scaling_factor
+
+
+                text_input_ids = tokenizer(
+                    batch['caption_cloth'],
+                    max_length=tokenizer.model_max_length,
+                    padding="max_length",
+                    truncation=True,
+                    return_tensors="pt"
+                ).input_ids
+                text_input_ids_2 = tokenizer_2(
+                    batch['caption_cloth'],
+                    max_length=tokenizer_2.model_max_length,
+                    padding="max_length",
+                    truncation=True,
+                    return_tensors="pt"
+                ).input_ids
+
+            
+                encoder_output = text_encoder(text_input_ids.to(accelerator.device), output_hidden_states=True)
+                text_embeds_cloth = encoder_output.hidden_states[-2]
+                encoder_output_2 = text_encoder_2(text_input_ids_2.to(accelerator.device), output_hidden_states=True)
+                text_embeds_2_cloth = encoder_output_2.hidden_states[-2]
+                text_embeds_cloth = torch.concat([text_embeds_cloth, text_embeds_2_cloth], dim=-1) # concat
+
+
+                down,reference_features = unet_encoder(cloth_values,timesteps, text_embeds_cloth,return_dict=False)
+                reference_features = list(reference_features)
+
+                noise_pred = unet(latent_model_input, timesteps, encoder_hidden_states,added_cond_kwargs=unet_added_cond_kwargs,garment_features=reference_features).sample
+
+
+                if noise_scheduler.config.prediction_type == "epsilon":
+                    target = noise
+                elif noise_scheduler.config.prediction_type == "v_prediction":
+                    target = noise_scheduler.get_velocity(model_input, noise, timesteps)
+                elif noise_scheduler.config.prediction_type == "sample":
+                    # We set the target to latents here, but the model_pred will return the noise sample prediction.
+                    target = model_input
+                    # We will have to subtract the noise residual from the prediction to get the target sample.
+                    model_pred = model_pred - noise
+                else:
+                    raise ValueError(f"Unknown prediction type {noise_scheduler.config.prediction_type}")
+
+                
+                if args.snr_gamma is None:
+                    loss = F.mse_loss(noise_pred.float(), target.float(), reduction="mean")
+                else:
+                    # Compute loss-weights as per Section 3.4 of https://arxiv.org/abs/2303.09556.
+                    # Since we predict the noise instead of x_0, the original formulation is slightly changed.
+                    # This is discussed in Section 4.2 of the same paper.
+                    snr = compute_snr(noise_scheduler, timesteps)
+                    if noise_scheduler.config.prediction_type == "v_prediction":
+                        # Velocity objective requires that we add one to SNR values before we divide by them.
+                        snr = snr + 1
+                    mse_loss_weights = (
+                        torch.stack([snr, args.snr_gamma * torch.ones_like(timesteps)], dim=1).min(dim=1)[0] / snr
+                    )
+
+                    loss = F.mse_loss(noise_pred.float(), target.float(), reduction="none")
+                    loss = loss.mean(dim=list(range(1, len(loss.shape)))) * mse_loss_weights
+                    loss = loss.mean()
+
+                avg_loss = accelerator.gather(loss.repeat(args.train_batch_size)).mean()
+                train_loss += avg_loss.item() / args.gradient_accumulation_steps
+
+                
+                # Backpropagate
+                accelerator.backward(loss)
+
+                if accelerator.sync_gradients:
+                    accelerator.clip_grad_norm_(params_to_opt, 1.0)
+
+                optimizer.step()
+                optimizer.zero_grad()
+                # Load scheduler, tokenizer and models.
+                progress_bar.update(1)
+                global_step += 1
+            if accelerator.sync_gradients:
+                progress_bar.update(1)
+                global_step += 1
+                accelerator.log({"train_loss": train_loss}, step=global_step)
+                train_loss = 0.0
+            logs = {"step_loss": loss.detach().item()}
+            progress_bar.set_postfix(**logs)
+
+            if global_step >= args.max_train_steps:
+                break
+
+                
+if __name__ == "__main__":
+    main()    

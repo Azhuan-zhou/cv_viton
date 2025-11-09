@@ -165,3 +165,5 @@ local_model_dir
 mask.jpg
 cloth.jpg
 vton.jpg
+ckpt_dir
+viton-hd
