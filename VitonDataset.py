@@ -116,7 +116,7 @@ class VitonHDDataset(data.Dataset):
         else:
             cloth_annotation = "shirts"
         
-        cloth = Image.open(os.path.join(self.dataroot, self.phase, "cloth", c_name))
+        cloth = Image.open(os.path.join(self.dataroot, self.phase, "cloth", c_name)).resize((self.width,self.height))
 
         im_pil_big = Image.open(
             os.path.join(self.dataroot, self.phase, "image", im_name)
@@ -132,7 +132,7 @@ class VitonHDDataset(data.Dataset):
         densepose_name = im_name
         densepose_map = Image.open(
             os.path.join(self.dataroot, self.phase, "image-densepose-new", densepose_name)
-        )
+        ).resize((self.width,self.height))
         pose_img = self.toTensor(densepose_map)  # [-1,1]
  
 

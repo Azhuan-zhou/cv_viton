@@ -163,6 +163,7 @@ class StableDiffusion3TryOnPipeline(DiffusionPipeline, SD3LoraLoaderMixin, FromS
             else 128
         )
         self.vit_processing = CLIPImageProcessor()
+        self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor)
         
         self.transformer_vton.requires_grad_(True)
         self.transformer_garm.requires_grad_(False)
@@ -520,7 +521,7 @@ class StableDiffusion3TryOnPipeline(DiffusionPipeline, SD3LoraLoaderMixin, FromS
 
     def forward(self,batch,
                 num_images_per_prompt=1,
-                fft_scale=0.1,
+                fft_scale=None,
                 callback_on_step_end_tensor_inputs: List[str] = ["latents"],
                 joint_attention_kwargs: Optional[Dict[str, Any]] = None,
                 clip_skip: Optional[int] = None,
@@ -584,7 +585,6 @@ class StableDiffusion3TryOnPipeline(DiffusionPipeline, SD3LoraLoaderMixin, FromS
                                         pooled_projections=cloth_image_enbeds,
                                         encoder_hidden_states=None,
                                         return_dict=False)
-        print(latents.shape, vton_model_latents.shape, mask.shape)
         noise_pred = self.transformer_vton(hidden_states=torch.cat([latents, vton_model_latents, mask], dim=1),
                             timestep=t,
                             pooled_projections=cloth_image_enbeds,
@@ -594,34 +594,44 @@ class StableDiffusion3TryOnPipeline(DiffusionPipeline, SD3LoraLoaderMixin, FromS
                             return_dict=False,
                             pose_cond=pose_fea)[0]
         
+        target = input_model_latents - noise
+        denoise_loss = F.mse_loss(noise_pred, target, reduction="mean")
 
-        denoise_loss = F.mse_loss(noise_pred, noise, reduction="mean")
-
-        num_steps = float(self.scheduler.config.num_train_timesteps)
-        t_cont = (t.float()+0.5)/ num_steps
-        t_cont = t_cont.view(-1, 1, 1, 1) 
-        z0_hat = (latents - t_cont * noise_pred) / (1.0 - t_cont) 
-        z0_hat = ( z0_hat / self.vae.config.scaling_factor) + self.vae.config.shift_factor
-        image_pred = self.vae.decode( z0_hat, return_dict=False)[0]
-        viton_mask = batch['mask'].to(device)
-        viton_pred =  image_pred * (viton_mask > 0.5)
-        viton_true = model_input * (viton_mask > 0.5)
-
-        F_tr = torch.fft.fftn(viton_pred, dim=(-2, -1))
-        F_p  = torch.fft.fftn(viton_true,  dim=(-2, -1))
-        F_diff = F_tr - F_p
-        F_dist_sq = F_diff.real**2 + F_diff.imag**2
-        fft_loss = F_dist_sq.mean()
-        total_loss = denoise_loss + fft_scale * fft_loss
         
-        print(f"denoise_loss: {denoise_loss.item()}, fft_loss: {fft_loss.item()}")
+        if fft_scale:
+            num_steps = float(self.scheduler.config.num_train_timesteps)
+            t_cont = (t.float()+0.5)/ num_steps
+            t_cont = t_cont.view(-1, 1, 1, 1) 
+            z0_hat = (latents - t_cont * noise_pred) / (1.0 - t_cont) 
+            z0_hat = ( z0_hat / self.vae.config.scaling_factor) + self.vae.config.shift_factor
+            image_pred = self.vae.decode( z0_hat, return_dict=False)[0]
+            viton_mask = batch['inpaint_mask'].to(device)
+            viton_pred =  image_pred * (viton_mask > 0.5)
+            viton_true = model_input * (viton_mask > 0.5)
+            F_tr = torch.fft.fftn(viton_pred, dim=(-2, -1))
+            F_p  = torch.fft.fftn(viton_true, dim=(-2, -1))
+            A_tr = torch.abs(F_tr)
+            A_p  = torch.abs(F_p)
+            A_tr = torch.log1p(A_tr)      # ln(1 + |F|)
+            A_p = torch.log1p(A_p)
+            fft_loss = F.mse_loss(A_tr, A_p).mean()
+            total_loss = denoise_loss + fft_scale * fft_loss
+        else:
+            fft_loss = torch.tensor(0.0)
+            total_loss = denoise_loss
+        #LA_tr = torch.log1p(A_tr)            
+        #LA_p  = torch.log1p(A_p)
+        #fft_loss =  F.mse_loss(LA_tr, LA_p)
+        
+    
+        
+        #print(f"denoise_loss: {denoise_loss.item()}, fft_loss: {fft_loss.item()}")
         return total_loss, denoise_loss, fft_loss
     
     @torch.no_grad()
     def inference(
         self,
-        height: Optional[int] = None,
-        width: Optional[int] = None,
+        batch,
         num_inference_steps: int = 28,
         timesteps: List[int] = None,
         guidance_scale: float = 7.0,
@@ -634,14 +644,16 @@ class StableDiffusion3TryOnPipeline(DiffusionPipeline, SD3LoraLoaderMixin, FromS
         clip_skip: Optional[int] = None,
         callback_on_step_end: Optional[Callable[[int, int, Dict], None]] = None,
         callback_on_step_end_tensor_inputs: List[str] = ["latents"],
-        cloth_image=None,
-        model_image=None,
-        mask=None,
-        pose_image=None
+        
     ):
-
-        height = height or self.default_sample_size * self.vae_scale_factor
-        width = width or self.default_sample_size * self.vae_scale_factor
+        device = self._execution_device
+        
+        cloth_image = batch["cloth_pure"]
+        vton_image = batch["im_mask"]
+        mask = batch["inpaint_mask"]
+        pose_image = batch["pose_img"]
+        batch_size, _, height, width = cloth_image.shape
+        
 
         # 1. Check inputs. Raise error if not correct
         self.check_inputs(
@@ -656,13 +668,9 @@ class StableDiffusion3TryOnPipeline(DiffusionPipeline, SD3LoraLoaderMixin, FromS
         self._interrupt = False
 
         # 2. Define call parameters
-        batch_size = cloth_image.shape[0]
-
-        device = self._execution_device
-
-
-
-        cloth_image_vit = cloth_image.to(device=device)
+    
+        cloth_image_vit = batch["cloth"]
+        cloth_image_vit = cloth_image_vit.to(device=device)
         cloth_image_enbeds = self._get_clip_image_embeds(cloth_image_vit, num_images_per_prompt, device)
         cloth_image_enbeds = cloth_image_enbeds.to(device=device)
         cloth_image_enbeds = cloth_image_enbeds.repeat(num_images_per_prompt, *([1] * (cloth_image_enbeds.dim() - 1)))
@@ -689,14 +697,12 @@ class StableDiffusion3TryOnPipeline(DiffusionPipeline, SD3LoraLoaderMixin, FromS
         )
 
 
-
-        model_image = model_image.to(latents)
-        cloth_image = cloth_image.to(latents)
+        cloth_image = cloth_image.to(device)
         mask = mask.to(latents)
-        vton_image = model_image * (mask < 0.5)
+        vton_image = vton_image.to(device)
         mask = F.interpolate(mask, (vton_image.shape[2]//8, vton_image.shape[3]//8))
         mask = mask[:, 0:1]
-        pose_fea = self.pose_guider(pose_image.to(device=latents.device, dtype=latents.dtype))
+        pose_fea = self.pose_guider(pose_image.to(device=device, dtype=latents.dtype))
         vton_model_latents = self.prepare_image_latents(vton_image)
         garm_model_latents = self.prepare_image_latents(cloth_image)
        

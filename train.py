@@ -19,12 +19,38 @@ import itertools
 weight_dtype = torch.float32
 
 
+def reinit_module(m):
+    if isinstance(m, (nn.Conv2d, nn.ConvTranspose2d)):
+        nn.init.kaiming_normal_(m.weight)
+        if m.bias is not None:
+            nn.init.zeros_(m.bias)
+
+    elif isinstance(m, nn.Linear):
+        nn.init.xavier_uniform_(m.weight)
+        if m.bias is not None:
+            nn.init.zeros_(m.bias)
+
+    elif isinstance(m, (nn.LayerNorm, nn.GroupNorm, nn.BatchNorm2d, nn.BatchNorm1d)):
+        if m.weight is not None:
+            nn.init.ones_(m.weight)
+        if m.bias is not None:
+            nn.init.zeros_(m.bias)
+
+    elif isinstance(m, nn.Embedding):
+        nn.init.normal_(m.weight, mean=0.0, std=0.02)
+
+    elif hasattr(m, "reset_parameters"):
+        try:
+            m.reset_parameters()
+        except:
+            pass
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Simple example of a training script.")
     parser.add_argument("--data_dir", type=str, default="./viton-hd", help="path to dataset")
-    parser.add_argument("--output_dir", type=str, default="./tryon_sd3_vton", help="path to save the model")
-    parser.add_argument("--width",type=int,default=768,)
-    parser.add_argument("--height",type=int,default=1024,)
+    parser.add_argument("--output_dir", type=str, default="./samples", help="path to save the model")
+    parser.add_argument("--width",type=int,default= 384,)
+    parser.add_argument("--height",type=int,default=512,)
     parser.add_argument("--repo_path", type=str, default="./local_model_dir", help="path to local model repo")
     parser.add_argument("--device", type=str, default="cuda", help="device to use for training")
     parser.add_argument("--adam_beta1", type=float, default=0.9, help="The beta1 parameter for the Adam optimizer.")
@@ -32,8 +58,8 @@ def parse_args():
     parser.add_argument("--adam_weight_decay", type=float, default=1e-2, help="Weight decay to use.")
     parser.add_argument("--adam_epsilon", type=float, default=1e-08, help="Epsilon value for the Adam optimizer")
     parser.add_argument("--use_8bit_adam", action="store_true", help="Whether or not to use 8-bit Adam from bitsandbytes.")
-    parser.add_argument("--train_batch_size", type=int, default=1, help="Batch size (per device) for the training dataloader.")
-    parser.add_argument("--test_batch_size", type=int, default=1, help="Batch size (per device) for the training dataloader.")
+    parser.add_argument("--train_batch_size", type=int, default=2, help="Batch size (per device) for the training dataloader.")
+    parser.add_argument("--test_batch_size", type=int, default=2, help="Batch size (per device) for the training dataloader.")
     parser.add_argument("--epochs", type=int, default=10, help="Total number of training epochs to perform.")
     parser.add_argument("--learning_rate",type=float,default=1e-5,help="Learning rate to use.",)
     parser.add_argument("--snr_gamma",type=float,default=None,help="SNR weighting gamma to be used if rebalancing the loss. Recommended value is 5.0. ""More details here: https://arxiv.org/abs/2303.09556.",)
@@ -46,6 +72,7 @@ def main():
  
     transformer_garm = SD3Transformer2DModel_Garm.from_pretrained(os.path.join(args.repo_path, "transformer_garm"), torch_dtype=weight_dtype,local_files_only=True)
     transformer_vton = SD3Transformer2DModel_Vton.from_pretrained(os.path.join(args.repo_path, "transformer_vton"), torch_dtype=weight_dtype,local_files_only=True)
+    #transformer_vton.apply(reinit_module)
     pose_guider =  PoseGuider(conditioning_embedding_channels=1536, conditioning_channels=3, block_out_channels=(32, 64, 256, 512))
     pose_guider.load_state_dict(torch.load(os.path.join(args.repo_path, "pose_guider", "diffusion_pytorch_model.bin")))
     image_encoder_large = CLIPVisionModelWithProjection.from_pretrained("openai/clip-vit-large-patch14", torch_dtype=weight_dtype)
@@ -122,14 +149,15 @@ def main():
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
-            if step % 100 == 0:
-                total_loss /= 100
-                total_loss_denoise /= 100
-                total_loss_fft /= 100
+            if step % 1000 == 0:
+                total_loss /= 1000
+                total_loss_denoise /= 1000
+                total_loss_fft /= 1000
                 print(f"Epoch {epoch}, Step {step}, Loss: {total_loss:.4f}, Denoise Loss: {total_loss_denoise:.4f}, FFT Loss: {total_loss_fft:.4f}")
                 total_loss = 0.0
                 total_loss_denoise = 0.0
                 total_loss_fft = 0.0
+            
         if epoch % 5 == 0:
             with torch.no_grad():
 
@@ -139,27 +167,13 @@ def main():
                 total_loss_fft = 0.0
                 for step, batch in tqdm(enumerate(test_dataloader), total=len(test_dataloader)):
                     if step == 0:
-                        pixel_values = batch["image"]
-                        B, _, H, W = pixel_values.shape
-                        device = pixel_values.device
-
-                        cloth_image = batch["cloth_pure"]
-
-                        mask = batch["inpaint_mask"]
-                        pose_image = batch["pose_img"]
                         images = pipeline.inference(
-                            height=H,
-                            width=W,
-                            batch_size=B,
+                            batch=batch,
                             num_inference_steps=20,
-                            cloth_image=cloth_image.to(device),
-                            model_image=pixel_values.to(device),
-                            mask=mask.to(device),
-                            pose_image=pose_image.to(device),
                         ).images
                         for i in range(len(images)):
                             images[i].save(os.path.join(args.output_dir,str(epoch)+"_"+str(i)+"_"+"test.jpg"))
-                    loss, denoise_loss, fft_loss = pipeline(batch)
+                    loss, denoise_loss, fft_loss = pipeline.forward(batch=batch)
                     total_loss += loss.item()
                     total_loss_denoise += denoise_loss.item()
                     total_loss_fft += fft_loss.item()
