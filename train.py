@@ -60,7 +60,7 @@ def parse_args():
     parser.add_argument("--use_8bit_adam", action="store_true", help="Whether or not to use 8-bit Adam from bitsandbytes.")
     parser.add_argument("--train_batch_size", type=int, default=2, help="Batch size (per device) for the training dataloader.")
     parser.add_argument("--test_batch_size", type=int, default=2, help="Batch size (per device) for the training dataloader.")
-    parser.add_argument("--epochs", type=int, default=10, help="Total number of training epochs to perform.")
+    parser.add_argument("--epochs", type=int, default=100, help="Total number of training epochs to perform.")
     parser.add_argument("--learning_rate",type=float,default=1e-5,help="Learning rate to use.",)
     parser.add_argument("--snr_gamma",type=float,default=None,help="SNR weighting gamma to be used if rebalancing the loss. Recommended value is 5.0. ""More details here: https://arxiv.org/abs/2303.09556.",)
     args = parser.parse_args()
@@ -72,7 +72,7 @@ def main():
  
     transformer_garm = SD3Transformer2DModel_Garm.from_pretrained(os.path.join(args.repo_path, "transformer_garm"), torch_dtype=weight_dtype,local_files_only=True)
     transformer_vton = SD3Transformer2DModel_Vton.from_pretrained(os.path.join(args.repo_path, "transformer_vton"), torch_dtype=weight_dtype,local_files_only=True)
-    #transformer_vton.apply(reinit_module)
+    transformer_vton.apply(reinit_module)
     pose_guider =  PoseGuider(conditioning_embedding_channels=1536, conditioning_channels=3, block_out_channels=(32, 64, 256, 512))
     pose_guider.load_state_dict(torch.load(os.path.join(args.repo_path, "pose_guider", "diffusion_pytorch_model.bin")))
     image_encoder_large = CLIPVisionModelWithProjection.from_pretrained("openai/clip-vit-large-patch14", torch_dtype=weight_dtype)
@@ -158,7 +158,7 @@ def main():
                 total_loss_denoise = 0.0
                 total_loss_fft = 0.0
             
-        if epoch % 5 == 0:
+        if epoch % 10 == 0:
             with torch.no_grad():
 
                 images = []
