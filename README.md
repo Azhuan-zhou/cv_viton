@@ -31,6 +31,12 @@ After generating a suitable mask, you can get the try-on results by click **Step
 1. You need a huggingface account and setup the token in order to pull the model weight using cli
 2. Run "hf auth login" -> "git lfs install" -> "git clone https://huggingface.co/BoyuanJiang/FitDiT local_model_dir"
 
+## Evaluation pipeline
+1. Configure all required fields in 'application.yaml'
+      - force_run : FID/KID normally require at least 1000 images, but setting this flag to `True` allows you to override that restriction.
+2. Execute the evaluation service, 'python -m src.service.evaluation_service'
+
+
 ## Local Demo
 First apply access of FitDiT [model weight](https://huggingface.co/BoyuanJiang/FitDiT), then clone model to *local_model_dir*
 
