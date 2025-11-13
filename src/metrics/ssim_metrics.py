@@ -2,8 +2,10 @@ from PIL import Image
 import numpy as np
 from skimage.metrics import structural_similarity as ssim
 from src.metrics.base_metric import MetricService
-
+from typing import ClassVar
+from src.service.types import MetricKind
 class SSIMService(MetricService):
+    KIND: ClassVar[MetricKind] = "pairwise"
     def __init__(self):
         pass
 

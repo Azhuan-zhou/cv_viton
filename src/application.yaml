@@ -2,3 +2,10 @@ paths:
   model_dir: "/Users/poyi/Poyi/Postgraduate/JHU/Y1S1/Comuter Vision/Project/Repository/local_model_dir"
   gt_dir: "../../../../Data_Test/GT"
   pred_dir: "../../../../Data_Test/Pred"
+  output_dir: "../../../../Data_Test/"
+
+data:
+  ext : [".png", ".jpg", ".jpeg", ".webp"]
+
+fid_kid:
+  force_run: False

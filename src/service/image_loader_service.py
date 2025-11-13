@@ -3,14 +3,15 @@ from typing import Iterator, Optional, Tuple, List, Dict
 from PIL import Image
 from src.utils.logger import logger
 from src.utils.image_pair_utils import ImagePairUtil
+from src.config import CONFIG
 
 class ImageLoaderService:
-    def __init__(self,gt_dir: str,pred_dir: str,exts: Tuple[str, ...] = (".png", ".jpg", ".jpeg", ".webp"),resize: Optional[Tuple[int, int]] = None):
+    def __init__(self,gt_dir: str,pred_dir: str,exts: Tuple[str, ...] = None,resize: Optional[Tuple[int, int]] = None):
         self.gt_dir = Path(gt_dir)
         self.pred_dir = Path(pred_dir)
-        self.extensions = tuple(e.lower() for e in exts)
+        self.extensions = tuple(e.lower() for e in exts) if exts is not None else tuple(e.lower() for e in CONFIG['data']['ext'])
         self.resize = resize
-
+        
         if not self.gt_dir.exists():
             raise FileNotFoundError(f"Ground Truth directory not found: {gt_dir}")
         if not self.pred_dir.exists():

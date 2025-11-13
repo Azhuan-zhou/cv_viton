@@ -1,9 +1,10 @@
 from pathlib import Path
 from PIL import Image
 from src.utils.logger import logger
+from src.config import CONFIG
 
 class ImagePairUtil:
-    SUPPORTED_EXTS = (".png", ".jpg", ".jpeg", ".webp")
+    SUPPORTED_EXTS = tuple(e.lower() for e in CONFIG['data']['ext'])
 
     @staticmethod
     def match_and_convert(gt_dir: Path, pred_dir: Path):
