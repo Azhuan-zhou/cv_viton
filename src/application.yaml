@@ -1,7 +1,8 @@
 paths:
   model_dir: "/Users/poyi/Poyi/Postgraduate/JHU/Y1S1/Comuter Vision/Project/Repository/local_model_dir"
   gt_dir: "../../../../Data_Test/GT"
-  pred_dir: "../../../../Data_Test/Pred"
+  pred_dir_self: "../../../../Data_Test/PRED_Self"
+  pred_dir_pair: "../../../../Data_Test/PRED_Pair"
   output_dir: "../../../../Data_Test/"
 
 data:

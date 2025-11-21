@@ -32,6 +32,7 @@ class ImagePairUtil:
 
             if gt_path.suffix.lower() != pred_path.suffix.lower():
                 pred_path = ImagePairUtil._convert_to_match(gt_path, pred_path)
+            pred_path = ImagePairUtil._resize_to_match(gt_path, pred_path)
 
             yield gt_path, pred_path
 
@@ -74,4 +75,25 @@ class ImagePairUtil:
 
         except Exception as e:
             logger.error(f"Failed to convert {pred_path.name}: {e}")
+            return pred_path
+    
+    @staticmethod
+    def _resize_to_match(gt_path: Path, pred_path: Path):
+        try:
+            with Image.open(gt_path) as gt_img, Image.open(pred_path) as pred_img:
+                gt_size = gt_img.size      
+                pred_size = pred_img.size  
+
+                if gt_size == pred_size:
+                    return pred_path
+
+                resized = pred_img.resize(gt_size, Image.BICUBIC)
+                resized.save(pred_path)
+
+                return pred_path
+
+        except Exception as e:
+            logger.error(
+                f"Failed to resize {pred_path.name} to match {gt_path.name}: {e}"
+            )
             return pred_path
