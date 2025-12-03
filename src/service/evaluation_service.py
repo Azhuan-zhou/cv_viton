@@ -1,10 +1,13 @@
+from unicodedata import name
 from src.utils.logger import logger
 from src.service.image_loader_service import ImageLoaderService
 from src.metrics.ssim_metrics import SSIMService
 from src.metrics.lpips_metrics import LPIPSService
 from src.metrics.clip_metrics import CLIPImageSimilarityService
-from src.metrics.fid_kid_metrics import FIDKIDService
+# from src.metrics.fid_kid_metrics import FIDKIDService
+from src.metrics.fid_kid_metrics_v2 import FIDKIDService
 
+from tqdm import tqdm 
 from src.utils.image_pair_utils import ImagePairUtil
 from pathlib import Path
 import numpy as np
@@ -49,25 +52,28 @@ def evaluate(metric, loader_self, loader_pair):
         pairs = list(loader_self.iter_pairs())
         vals = []
 
-        for fname, gt_img, pred_img in pairs:
+        for fname, gt_img, pred_img in tqdm(pairs, desc=f"Evaluating {name.upper()}"):
             v = float(metric.compute(gt_img, pred_img))
             vals.append(v)
-            logger.info(f"{name.upper()} [{fname}]: {v:.4f}")
 
         mean_val = float(np.mean(vals)) if vals else float("nan")
         results[name] = mean_val
-        logger.info(f"{name.upper()} mean: {mean_val:.4f}")
+        logger.info(f"{name.upper()} mean: {mean_val:.6f}")
         return results
     else:
-        gt_dir = str(loader_pair.gt_dir)
-        pred_dir = str(loader_pair.pred_dir)
+        logger.info(f"--- Computing {name.upper()} [PAIRED] ---")
+        res_paired = metric.compute(str(loader_self.gt_dir), str(loader_self.pred_dir))
+        for k, v in res_paired.items():
+            results[f"{k}_paired"] = v
+            
+        logger.info(f"--- Computing {name.upper()} [UNPAIRED] ---")
+        res_unpaired = metric.compute(str(loader_pair.gt_dir), str(loader_pair.pred_dir))
+        for k, v in res_unpaired.items():
+            results[f"{k}_unpaired"] = v
 
-        res = metric.compute(gt_dir, pred_dir)
-        results[name] = res
-
-        logger.info(f"{name.upper()}: " + ", ".join(
-            f"{k}={v:.4f}" for k, v in res.items()
-        ))
+        log_msg = f"{name.upper()}: " + ", ".join(f"{k}={v:.6f}" for k, v in results.items())
+        logger.info(log_msg)
+        
         return results
 
 def summary(results, out_dir: Path):
@@ -77,9 +83,9 @@ def summary(results, out_dir: Path):
     
     for k, v in results.items():
         if isinstance(v, dict):
-            msg = f"{k}: " + ", ".join(f"{kk}={vv:.4f}" for kk, vv in v.items())
+            msg = f"{k}: " + ", ".join(f"{kk}={vv:.6f}" for kk, vv in v.items())
         else:
-            msg = f"{k}: {v:.4f}"
+            msg = f"{k}: {v:.6f}"
         logger.info(msg)
         lines.append(msg + "\n")
 
