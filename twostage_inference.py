@@ -1,11 +1,7 @@
 import os
 import torch
 import argparse
-
-# ==== import your existing FitDiT inference functions ====
 from inference import run_inference, generate_mask
-
-# ==== SDXL Inpainting ====
 from diffusers import StableDiffusionXLInpaintPipeline
 
 def load_sdxl_inpaint(device=None):
