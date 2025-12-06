@@ -56,4 +56,10 @@ python gradio_sd3.py --model_path local_model_dir --fp16 --offload
 # Run model with fp16 and aggressive cpu offload, slowest inference and less memory
 python gradio_sd3.py --model_path local_model_dir --fp16 --aggressive_offload
 ```
-
+### Download SDXL Inpainting model
+Run the following command:
+```bash
+huggingface-cli download \
+  diffusers/stable-diffusion-xl-1.0-inpainting-0.1 \
+  --local-dir ./local_model_dir/sdxl_inpaint \
+  --local-dir-use-symlinks False
