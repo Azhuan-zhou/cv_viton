@@ -34,7 +34,11 @@ transformers==4.39.3
 gradio==5.8.0
 onnxruntime-gpu==1.20.1
 ```
+### Evaluation pipeline
 
+Configure all required fields in 'application.yaml'
+force_run : FID/KID normally require at least 1000 images, but setting this flag to True allows you to override that restriction.
+Execute the evaluation service, 'python -m src.service.evaluation_service'
 ### Run gradio locally
 ```
 # Run model with bf16 without any offload, fastest inference and most memory
