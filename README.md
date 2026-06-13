@@ -22,7 +22,7 @@ After generating a suitable mask, you can get the try-on results by click **Step
 
 
 ## Local Demo
-First apply access of FitDiT [model weight](https://huggingface.co/BoyuanJiang/FitDiT), then clone model to *local_model_dir*
+First apply access of  [model weight](), then unzip and put it into *cv_viton*
 
 ### Enviroment
 We test our model with following enviroment
