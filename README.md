@@ -1,13 +1,6 @@
 # CV Final Project
 
 
-## Task
-1. frequency loss: design 
-2. inference code:
-3. evaluate code:
-4. train code: 
-5. video demo: 
-
 ## Gradio Demo
 Our algorithm is divided into two steps. The first step is to generate the mask of the try-on area, and the second step is to try-on in the mask area.
 
