@@ -20,12 +20,21 @@ You can simpley get try-on mask by click **Step1: Run Mask** at the right side o
 ### Step2: Run Try-on
 After generating a suitable mask, you can get the try-on results by click **Step2: Run Try-on**. In the Try-on resolution drop-down box, you can select a suitable processing resolution. In our online demo, the default resolution is 1152x1536, which means that the input model image and garment image will be pad and resized to this resolution before being fed into the model.
 
+## Prerequisite
+1. You need a huggingface account and setup the token in order to pull the model weight using cli
+2. Run "hf auth login" -> "git lfs install" -> "git clone https://huggingface.co/BoyuanJiang/FitDiT local_model_dir"
+
+## Evaluation pipeline
+1. Configure all required fields in 'application.yaml'
+      - force_run : FID/KID normally require at least 1000 images, but setting this flag to `True` allows you to override that restriction.
+2. Execute the evaluation service, 'python -m src.service.evaluation_service'
+
 
 ## Local Demo
 First apply access of  [model weight](), then unzip and put it into *cv_viton*
 
 ### Enviroment
-We test our model with following enviroment
+We test our model with following enviroment , torch 2.4.0 works with python 3.11 and below
 ```
 torch==2.4.0
 torchvision==0.19.0
